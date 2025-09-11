@@ -33,17 +33,8 @@ struct PairHash {
     }
 };
 
-void byte_pair_enc(std::vector<std::string>& xs) {
-    // ignoring regex for now
-    // omp parallel for
-    // NEED TO ADD PROPER BENCHES ASAP!!!
-    int N = (int)xs.size();
-    std::vector<std::vector<int>> bytes;
-    bytes.reserve(N);
-    std::transform(xs.begin(), xs.end(), std::back_inserter(bytes),
-                   [](std::string &s) { return to_bytes(s); });
-
-    std::cout << (int)bytes[0].size() << std::endl;
+void byte_pair_enc(std::vector<std::vector<int>>& bytes) {
+    const int N = (int)bytes.size();
 
     std::unordered_map<int, std::vector<int>> decoder_dict;
     std::unordered_map<std::pair<int, int>, int, PairHash> encoder_dict;
@@ -51,7 +42,7 @@ void byte_pair_enc(std::vector<std::string>& xs) {
     std::unordered_map<std::pair<int, int>, int, PairHash> freqs;
     const int start_idx = 256;
     for (int it=0; it<num_merges; it++) {
-        int new_idx = it + start_idx;
+        const int new_idx = it + start_idx;
 
         for (auto byte : bytes) 
             for (int i=0, sz=(int)byte.size(); i<sz-1; i++) 
@@ -88,18 +79,103 @@ void byte_pair_enc(std::vector<std::string>& xs) {
         }
         freqs.clear();
     }
-
-    std::cout << (int)bytes[0].size() << std::endl;
 }
 
-int main() {
+void byte_pair_enc_1(std::vector<std::vector<int>>& bytes) {
+    const int N = (int)bytes.size();
+    std::vector<std::vector<int>> offsets(N);
+    for (int i=0; i<N; i++)
+        offsets[i] = std::vector<int>((int)bytes[i].size(), 1);
+
+    std::unordered_map<int, std::vector<int>> decoder_dict;
+    std::unordered_map<std::pair<int, int>, int, PairHash> encoder_dict;
+
+    std::unordered_map<std::pair<int, int>, int, PairHash> freqs;
+    const int start_idx = 256;
+    for (int it=0; it<num_merges; it++) {
+        const int new_idx = it + start_idx;
+
+        for (int b=0; b<N; b++) 
+            for (int i=0, sz=(int)bytes[b].size(); i<sz-1; i++) 
+                freqs[std::pair<int, int>{bytes[b][i], bytes[b][i+offsets[b][i]]}]++;
+        
+        std::pair<int, std::pair<int, int>> most_freq = {0, {0, 0}};
+        for (auto &[k, v]: freqs)
+            most_freq = std::max(most_freq, {v, k});
+
+        if (most_freq.first <= 1) break;
+        std::pair<int, int> mf_vals = most_freq.second;
+
+        std::vector<int> nkey;
+        nkey.insert(nkey.end(), decoder_dict[mf_vals.first].begin(),
+                    decoder_dict[mf_vals.first].end());
+        nkey.insert(nkey.end(), decoder_dict[mf_vals.second].begin(),
+                    decoder_dict[mf_vals.second].end());
+        decoder_dict[new_idx] = nkey;
+        encoder_dict[mf_vals] = new_idx;
+
+        for (int b=0; b<N; b++) {
+            auto& enc_x = bytes[b];
+            for (int i=0, sz=(int)enc_x.size(); i<sz-1; i++) {
+                if (enc_x[i] == mf_vals.first && enc_x[i+offsets[b][i]] == mf_vals.second) {
+                    enc_x[i] = new_idx;
+                    offsets[b][i]++;
+                } 
+            }
+        }
+        freqs.clear();
+    }
+}
+
+#include <benchmark/benchmark.h>
+
+static void BM_BPE(benchmark::State& state) {
     std::ifstream t("data/input.txt");
     std::stringstream buffer;
     buffer << t.rdbuf();
 
     std::vector<std::string> in{buffer.str()};
-    byte_pair_enc(in);
+
+    std::vector<std::vector<int>> bytes;
+    bytes.reserve((int)in.size());
+    std::transform(in.begin(), in.end(), std::back_inserter(bytes),
+                    [](std::string &s) { return to_bytes(s); });
+    for (auto _ : state) {
+        byte_pair_enc(bytes);
+        benchmark::DoNotOptimize(bytes);
+    }
 }
+
+static void BM_BPE_1(benchmark::State& state) {
+    std::ifstream t("data/input.txt");
+    std::stringstream buffer;
+    buffer << t.rdbuf();
+
+    std::vector<std::string> in{buffer.str()};
+
+    std::vector<std::vector<int>> bytes;
+    bytes.reserve((int)in.size());
+    std::transform(in.begin(), in.end(), std::back_inserter(bytes),
+                    [](std::string &s) { return to_bytes(s); });
+    for (auto _ : state) {
+        byte_pair_enc_1(bytes);
+        benchmark::DoNotOptimize(bytes);
+    }
+}
+
+BENCHMARK(BM_BPE);
+BENCHMARK(BM_BPE_1);
+BENCHMARK_MAIN();
+
+
 /*
 https://en.cppreference.com/w/cpp/regex.html
+
+cuda parallize along the axes (regex word splits), use grid-stride trick
+instead of moving vectors every single time, we have another vector offsets. when looking for pairs use offset array, and when replacing we increment offset
+figure out how to use dp and tries to optimize the code
+
+compile with O3 - done, 10x speedup
+
+test this: https://codeforces.com/blog/entry/60737
 */
