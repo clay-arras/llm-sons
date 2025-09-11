@@ -23,6 +23,14 @@ std::vector<int> to_bytes(const std::string& s) {
     return bytes;
 }
 
+std::vector<uint16_t> to_bytes_1(const std::string& s) {
+    std::vector<uint16_t> bytes;
+    bytes.reserve(s.size());
+    std::transform(s.begin(), s.end(), std::back_inserter(bytes), [](char c){
+        return static_cast<uint16_t>(std::byte(c));
+    });
+    return bytes;
+}
 struct PairHash {
     template <class T1, class T2>
     std::size_t operator()(const std::pair<T1, T2>& p) const {
@@ -81,32 +89,30 @@ void byte_pair_enc(std::vector<std::vector<int>>& bytes) {
     }
 }
 
-void byte_pair_enc_1(std::vector<std::vector<int>>& bytes) {
-    const int N = (int)bytes.size();
-    std::vector<std::vector<int>> offsets(N);
-    for (int i=0; i<N; i++)
-        offsets[i] = std::vector<int>((int)bytes[i].size(), 1);
+constexpr uint16_t nsize = num_merges + 256 + 1;
+void byte_pair_enc_1(std::vector<std::vector<uint16_t>>& bytes) {
+    const uint16_t N = (int)bytes.size();
 
-    std::unordered_map<int, std::vector<int>> decoder_dict;
-    std::unordered_map<std::pair<int, int>, int, PairHash> encoder_dict;
+    std::unordered_map<uint16_t, std::vector<uint16_t>> decoder_dict;
+    std::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> encoder_dict;
 
-    std::unordered_map<std::pair<int, int>, int, PairHash> freqs;
-    const int start_idx = 256;
-    for (int it=0; it<num_merges; it++) {
-        const int new_idx = it + start_idx;
+    std::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> freqs;
+    const uint16_t start_idx = 256;
+    for (uint16_t it=0; it<num_merges; it++) {
+        const uint16_t new_idx = it + start_idx;
 
-        for (int b=0; b<N; b++) 
-            for (int i=0, sz=(int)bytes[b].size(); i<sz-1; i++) 
-                freqs[std::pair<int, int>{bytes[b][i], bytes[b][i+offsets[b][i]]}]++;
+        for (auto byte : bytes) 
+            for (uint16_t i=0, sz=(int)byte.size(); i<sz-1; i++) 
+                freqs[std::pair<uint16_t, uint16_t>{byte[i], byte[i+1]}]++;
         
-        std::pair<int, std::pair<int, int>> most_freq = {0, {0, 0}};
+        std::pair<uint16_t, std::pair<uint16_t, uint16_t>> most_freq = {0, {0, 0}};
         for (auto &[k, v]: freqs)
             most_freq = std::max(most_freq, {v, k});
 
         if (most_freq.first <= 1) break;
-        std::pair<int, int> mf_vals = most_freq.second;
+        std::pair<uint16_t, uint16_t> mf_vals = most_freq.second;
 
-        std::vector<int> nkey;
+        std::vector<uint16_t> nkey;
         nkey.insert(nkey.end(), decoder_dict[mf_vals.first].begin(),
                     decoder_dict[mf_vals.first].end());
         nkey.insert(nkey.end(), decoder_dict[mf_vals.second].begin(),
@@ -114,17 +120,23 @@ void byte_pair_enc_1(std::vector<std::vector<int>>& bytes) {
         decoder_dict[new_idx] = nkey;
         encoder_dict[mf_vals] = new_idx;
 
-        for (int b=0; b<N; b++) {
-            auto& enc_x = bytes[b];
-            for (int i=0, sz=(int)enc_x.size(); i<sz-1; i++) {
-                if (enc_x[i] == mf_vals.first && enc_x[i+offsets[b][i]] == mf_vals.second) {
-                    enc_x[i] = new_idx;
-                    offsets[b][i]++;
-                } 
+        for (auto& enc_x : bytes) {
+            std::vector<uint16_t> nenc_x;
+            nenc_x.reserve(enc_x.size());
+            
+            for (uint16_t i=0, sz=(int)enc_x.size(); i<sz-1; i++) {
+                if (enc_x[i] == mf_vals.first && enc_x[i+1] == mf_vals.second) {
+                    nenc_x.push_back(new_idx);
+                    i++;
+                } else {
+                    nenc_x.push_back(enc_x[i]);
+                }
             }
+            enc_x = nenc_x;
         }
         freqs.clear();
     }
+
 }
 
 #include <benchmark/benchmark.h>
@@ -153,10 +165,10 @@ static void BM_BPE_1(benchmark::State& state) {
 
     std::vector<std::string> in{buffer.str()};
 
-    std::vector<std::vector<int>> bytes;
+    std::vector<std::vector<uint16_t>> bytes;
     bytes.reserve((int)in.size());
     std::transform(in.begin(), in.end(), std::back_inserter(bytes),
-                    [](std::string &s) { return to_bytes(s); });
+                    [](std::string &s) { return (to_bytes_1(s)); });
     for (auto _ : state) {
         byte_pair_enc_1(bytes);
         benchmark::DoNotOptimize(bytes);
