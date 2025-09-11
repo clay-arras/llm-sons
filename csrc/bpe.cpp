@@ -7,23 +7,16 @@
 #include <sstream>
 #include <fstream>
 
+#include "robin_hood.h"
+
 
 // future optimizations: switch from int to smaller + unsigned b/c < 50k
+
 
 // with python it takes 180s
 const int num_merges = 100;
 
-std::vector<int> to_bytes(const std::string& s) {
-    std::vector<int> bytes;
-    bytes.reserve(s.size());
-      
-    std::transform(s.begin(), s.end(), std::back_inserter(bytes), [](char c){
-        return static_cast<int>(std::byte(c));
-    });
-    return bytes;
-}
-
-std::vector<uint16_t> to_bytes_1(const std::string& s) {
+std::vector<uint16_t> to_bytes(const std::string& s) {
     std::vector<uint16_t> bytes;
     bytes.reserve(s.size());
     std::transform(s.begin(), s.end(), std::back_inserter(bytes), [](char c){
@@ -31,6 +24,7 @@ std::vector<uint16_t> to_bytes_1(const std::string& s) {
     });
     return bytes;
 }
+
 struct PairHash {
     template <class T1, class T2>
     std::size_t operator()(const std::pair<T1, T2>& p) const {
@@ -41,62 +35,14 @@ struct PairHash {
     }
 };
 
-void byte_pair_enc(std::vector<std::vector<int>>& bytes) {
-    const int N = (int)bytes.size();
-
-    std::unordered_map<int, std::vector<int>> decoder_dict;
-    std::unordered_map<std::pair<int, int>, int, PairHash> encoder_dict;
-
-    std::unordered_map<std::pair<int, int>, int, PairHash> freqs;
-    const int start_idx = 256;
-    for (int it=0; it<num_merges; it++) {
-        const int new_idx = it + start_idx;
-
-        for (auto byte : bytes) 
-            for (int i=0, sz=(int)byte.size(); i<sz-1; i++) 
-                freqs[std::pair<int, int>{byte[i], byte[i+1]}]++;
-        
-        std::pair<int, std::pair<int, int>> most_freq = {0, {0, 0}};
-        for (auto &[k, v]: freqs)
-            most_freq = std::max(most_freq, {v, k});
-
-        if (most_freq.first <= 1) break;
-        std::pair<int, int> mf_vals = most_freq.second;
-
-        std::vector<int> nkey;
-        nkey.insert(nkey.end(), decoder_dict[mf_vals.first].begin(),
-                    decoder_dict[mf_vals.first].end());
-        nkey.insert(nkey.end(), decoder_dict[mf_vals.second].begin(),
-                    decoder_dict[mf_vals.second].end());
-        decoder_dict[new_idx] = nkey;
-        encoder_dict[mf_vals] = new_idx;
-
-        for (auto& enc_x : bytes) {
-            std::vector<int> nenc_x;
-            nenc_x.reserve(enc_x.size());
-            
-            for (int i=0, sz=(int)enc_x.size(); i<sz-1; i++) {
-                if (enc_x[i] == mf_vals.first && enc_x[i+1] == mf_vals.second) {
-                    nenc_x.push_back(new_idx);
-                    i++;
-                } else {
-                    nenc_x.push_back(enc_x[i]);
-                }
-            }
-            enc_x = nenc_x;
-        }
-        freqs.clear();
-    }
-}
-
 constexpr uint16_t nsize = num_merges + 256 + 1;
-void byte_pair_enc_1(std::vector<std::vector<uint16_t>>& bytes) {
+void byte_pair_enc(std::vector<std::vector<uint16_t>>& bytes) {
     const uint16_t N = (int)bytes.size();
 
-    std::unordered_map<uint16_t, std::vector<uint16_t>> decoder_dict;
-    std::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> encoder_dict;
+    robin_hood::unordered_map<uint16_t, std::vector<uint16_t>> decoder_dict;
+    robin_hood::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> encoder_dict;
 
-    std::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> freqs;
+    robin_hood::unordered_map<std::pair<uint16_t, uint16_t>, long long, PairHash> freqs;
     const uint16_t start_idx = 256;
     for (uint16_t it=0; it<num_merges; it++) {
         const uint16_t new_idx = it + start_idx;
@@ -105,7 +51,7 @@ void byte_pair_enc_1(std::vector<std::vector<uint16_t>>& bytes) {
             for (uint16_t i=0, sz=(int)byte.size(); i<sz-1; i++) 
                 freqs[std::pair<uint16_t, uint16_t>{byte[i], byte[i+1]}]++;
         
-        std::pair<uint16_t, std::pair<uint16_t, uint16_t>> most_freq = {0, {0, 0}};
+        std::pair<long long, std::pair<uint16_t, uint16_t>> most_freq = {0, {0, 0}};
         for (auto &[k, v]: freqs)
             most_freq = std::max(most_freq, {v, k});
 
@@ -139,6 +85,54 @@ void byte_pair_enc_1(std::vector<std::vector<uint16_t>>& bytes) {
 
 }
 
+void byte_pair_enc_test(std::vector<std::vector<uint16_t>>& bytes) {
+    const uint16_t N = (int)bytes.size();
+
+    robin_hood::unordered_map<uint16_t, std::vector<uint16_t>> decoder_dict;
+    robin_hood::unordered_map<std::pair<uint16_t, uint16_t>, uint16_t, PairHash> encoder_dict;
+
+    robin_hood::unordered_map<std::pair<uint16_t, uint16_t>, long long, PairHash> freqs;
+    const uint16_t start_idx = 256;
+    for (uint16_t it=0; it<num_merges; it++) {
+        const uint16_t new_idx = it + start_idx;
+
+        for (auto byte : bytes) 
+            for (uint16_t i=0, sz=(int)byte.size(); i<sz-1; i++) 
+                freqs[std::pair<uint16_t, uint16_t>{byte[i], byte[i+1]}]++;
+        
+        std::pair<long long, std::pair<uint16_t, uint16_t>> most_freq = {0, {0, 0}};
+        for (auto &[k, v]: freqs)
+            most_freq = std::max(most_freq, {v, k});
+
+        if (most_freq.first <= 1) break;
+        std::pair<uint16_t, uint16_t> mf_vals = most_freq.second;
+
+        std::vector<uint16_t> nkey;
+        nkey.insert(nkey.end(), decoder_dict[mf_vals.first].begin(),
+                    decoder_dict[mf_vals.first].end());
+        nkey.insert(nkey.end(), decoder_dict[mf_vals.second].begin(),
+                    decoder_dict[mf_vals.second].end());
+        decoder_dict[new_idx] = nkey;
+        encoder_dict[mf_vals] = new_idx;
+
+        for (auto& enc_x : bytes) {
+            std::vector<uint16_t> nenc_x;
+            nenc_x.reserve(enc_x.size());
+            
+            for (uint16_t i=0, sz=(int)enc_x.size(); i<sz-1; i++) {
+                if (enc_x[i] == mf_vals.first && enc_x[i+1] == mf_vals.second) {
+                    nenc_x.push_back(new_idx);
+                    i++;
+                } else {
+                    nenc_x.push_back(enc_x[i]);
+                }
+            }
+            enc_x = nenc_x;
+        }
+        freqs.clear();
+    }
+}
+
 #include <benchmark/benchmark.h>
 
 static void BM_BPE(benchmark::State& state) {
@@ -148,17 +142,17 @@ static void BM_BPE(benchmark::State& state) {
 
     std::vector<std::string> in{buffer.str()};
 
-    std::vector<std::vector<int>> bytes;
+    std::vector<std::vector<uint16_t>> bytes;
     bytes.reserve((int)in.size());
     std::transform(in.begin(), in.end(), std::back_inserter(bytes),
-                    [](std::string &s) { return to_bytes(s); });
+                    [](std::string &s) { return (to_bytes(s)); });
     for (auto _ : state) {
         byte_pair_enc(bytes);
         benchmark::DoNotOptimize(bytes);
     }
 }
 
-static void BM_BPE_1(benchmark::State& state) {
+static void BM_BPE_test(benchmark::State& state) {
     std::ifstream t("data/input.txt");
     std::stringstream buffer;
     buffer << t.rdbuf();
@@ -168,15 +162,15 @@ static void BM_BPE_1(benchmark::State& state) {
     std::vector<std::vector<uint16_t>> bytes;
     bytes.reserve((int)in.size());
     std::transform(in.begin(), in.end(), std::back_inserter(bytes),
-                    [](std::string &s) { return (to_bytes_1(s)); });
+                    [](std::string &s) { return (to_bytes(s)); });
     for (auto _ : state) {
-        byte_pair_enc_1(bytes);
+        byte_pair_enc_test(bytes);
         benchmark::DoNotOptimize(bytes);
     }
 }
 
 BENCHMARK(BM_BPE);
-BENCHMARK(BM_BPE_1);
+BENCHMARK(BM_BPE_test);
 BENCHMARK_MAIN();
 
 
